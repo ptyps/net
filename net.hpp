@@ -182,15 +182,25 @@ namespace net {
 
     switch (ai->ai_family) {
       case AF_INET6: {
-        ai->ai_addr = (sockaddr *) new sockaddr_in6();
+        auto sai = new sockaddr_in6();
+        sai->sin6_family = AF_INET6;
+        sai->sin6_addr = in6addr_any;
+
         ai->ai_addrlen = sizeof(sockaddr_in6);
+        ai->ai_addr = (sockaddr *) sai;
+        
         inet_pton(AF_INET6, &addr[0], &((sockaddr_in6 *) ai->ai_addr)->sin6_addr);
         break;
       }
 
       case AF_INET: {
-        ai->ai_addr = (sockaddr *) new sockaddr_in();
+        auto sai = new sockaddr_in();
+        sai->sin_addr.s_addr = INADDR_ANY;
+        sai->sin_family = AF_INET;
+
         ai->ai_addrlen = sizeof(sockaddr_in);
+        ai->ai_addr = (sockaddr *) sai;
+
         inet_pton(AF_INET, &addr[0], &((sockaddr_in *) ai->ai_addr)->sin_addr);
         break;
       }
@@ -243,7 +253,8 @@ namespace net {
 
     return ntohs(out);
   }
-  
+
+  // assign port
   void set_port(addrinfo* &ai, uint16_t p) {
     switch (ai->ai_family) {
       case AF_INET6:
@@ -261,6 +272,7 @@ namespace net {
 
   // ----
 
+  // return a list of IP addresses
   std::list<std::string> lookup(pstd::vstring host, t_family f = family::Unspecified) {
     auto out = std::list<std::string>();
     auto ai = new addrinfo();
@@ -293,6 +305,13 @@ namespace net {
 
   // ----
 
+  status option(uint id, uint opt, uint on = !0) {
+    auto i = ::setsockopt(id, SOL_SOCKET, opt, &on, sizeof(int));
+
+    return (i != EOF) ?
+      status::SUCCESS : status::FAIL;
+  }
+
   std::optional<uint> open(addrinfo* ai) {
     auto i = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
 
@@ -302,66 +321,54 @@ namespace net {
     return i;
   }
 
-  status connect(uint id, addrinfo* &ai) {
+  status connect(uint id, addrinfo* ai) {
     auto i = ::connect(id, ai->ai_addr, ai->ai_addrlen);
 
     return (i != EOF) ?
       status::SUCCESS : status::FAIL;
   }
 
+  status bind(uint id, addrinfo* ai) {
+    auto i = ::bind(id, ai->ai_addr, ai->ai_addrlen);
+
+    return (i != EOF) ?
+      status::SUCCESS : status::FAIL;
+  }
+
+
   status close(uint id) {
     return ::close(id) != EOF ?
       status::FAIL : status::SUCCESS;
   }
 
-  class Socket {
-    private:
-      addrinfo* ai;
-      uint id;
+  std::variant<event, std::string> recv(uint id, uint size = 1024) {
+    auto buffer = std::vector<char>(size);
+    auto recvd = std::string("");
+    auto len = int(0);
 
-    public:
-      void operator delete(void*) = delete;
-      void* operator new(size_t) = delete;
+    while (!0) {
+      auto i = ::recv(id, &buffer[0], size, 0);
 
-      ~Socket() {
-        std::free(ai); // ?
+      if (i == EOF) {
+        if (errno == EAGAIN)
+          continue;
+
+        return event::ERROR;
       }
 
-      Socket() {
-        ai = new addrinfo();
-      }
+      if (i == 0)
+        return event::DISCONNECTED;
 
-      void type(t_type t) {
-        set_type(ai, t);
-      }
+      auto begin = std::begin(buffer);
+      auto end = std::end(buffer);
+      
+      recvd += std::string(begin, end);
+      buffer.clear();
+      len += i;
 
-      void proto(t_proto p) {
-        set_proto(ai, p);
-      }
+      if (i < size)
+        return recvd.substr(0, len);
+    }
 
-      status connect(uint16_t port, pstd::vstring host, t_family family = family::Unspecified) {
-        for (auto addr : lookup(host, family)) {
-          set_addr(ai, addr);
-          set_port(ai, port);
-
-          auto fd = open(ai);
-
-          if (!fd)
-            continue;
-
-          auto i = net::connect(*fd, ai);
-
-          if (i == status::FAIL)
-            continue;
-
-          id = *fd;
-
-          return status::SUCCESS;
-        }
-
-        return status::FAIL;
-      }
-  };
-
-  // ----
+  }
 }
