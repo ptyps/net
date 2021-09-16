@@ -9,9 +9,10 @@
 #include <list>
 
 #include "debug.hpp"
+#include "pstd.hpp"
 
 namespace net {
-  static debugging::Debug* debug = new debugging::Debug("net", debugging::colors::red);
+  static debugging::Debug* debug = new debugging::Debug("net", debugging::colors::RED);
 
   void enableDebug() {
     debug->enable();
@@ -359,7 +360,7 @@ namespace net {
   // ----
 
   status option(uint id, uint opt, uint on = !0) {
-    log("setting socket opt %i to %s", on == !0 ? "on" : "off");
+    log("setting socket opt %i: %i", opt, on);
 
     auto i = ::setsockopt(id, SOL_SOCKET, opt, &on, sizeof(int));
 
