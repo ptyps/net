@@ -1,7 +1,5 @@
 #pragma once
 
-#include <openssl/ssl.h>
-#include <openssl/err.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -10,9 +8,26 @@
 #include <string>
 #include <list>
 
-#include "pstd.hpp"
+#include "debug.hpp"
 
 namespace net {
+  static debugging::Debug* debug = new debugging::Debug("net", debugging::colors::red);
+
+  void enableDebug() {
+    debug->enable();
+  }
+
+  void disableDebug() {
+    debug->disable();
+  }
+
+  template <typename ...A>
+    void log(pstd::vstring str, A ...args) {
+      debug->log(str, args ...);
+    }
+
+  // ----
+
   struct exception : public std::exception {
     private:
       std::string message;
@@ -62,6 +77,8 @@ namespace net {
 
   // determines whether or not an IP address is valid IPv6
   bool isIPv6(pstd::vstring ip) {
+    log("checking if ipv6 %s", &ip[0]);
+
     auto sa = sockaddr_in6();
     auto i = ::inet_pton(AF_INET6, &ip[0], &(sa.sin6_addr));
 
@@ -70,6 +87,8 @@ namespace net {
 
   // determines whether or not an IP address is valid IPv4
   bool isIPv4(pstd::vstring ip) {
+    log("checking if ipv4 %s", &ip[0]);
+
     auto sa = sockaddr_in();
     auto i = ::inet_pton(AF_INET, &ip[0], &(sa.sin_addr));
 
@@ -78,7 +97,10 @@ namespace net {
 
   // ----
 
+  // sets family, used by set_addr.
   void set_family(addrinfo* &ai, family f) {
+    log("assigning family %i", f);
+
     switch (f) {
       case family::IPv6:
         ai->ai_family = AF_INET6;
@@ -98,6 +120,8 @@ namespace net {
   }
 
   family get_family(addrinfo* ai) {
+    log("getting family");
+
     if (ai->ai_family == AF_INET6)
       return family::IPv6;
 
@@ -120,7 +144,9 @@ namespace net {
 
   // ----
   
-  void set_proto(addrinfo* &ai, proto p) {   
+  void set_proto(addrinfo* &ai, proto p) {  
+    log("assigning protocol %i", p);
+
     switch (p) {
       case proto::IP:
         ai->ai_protocol = IPPROTO_IP;
@@ -140,6 +166,8 @@ namespace net {
   }
   
   proto get_proto(addrinfo* ai) {
+    log("getting protocol");
+
     if (ai->ai_protocol == IPPROTO_IP)
       return proto::IP;
 
@@ -155,6 +183,8 @@ namespace net {
   // ----
   
   void set_type(addrinfo* &ai, type t) {   
+    log("assigning type %i", t);
+
     switch (t) {
       case type::STREAM:
         ai->ai_socktype = SOCK_STREAM;
@@ -170,6 +200,8 @@ namespace net {
   }
 
   type get_type(addrinfo* ai) {
+    log("getting type");
+
     if (ai->ai_socktype == SOCK_STREAM)
       return type::STREAM;
 
@@ -182,22 +214,34 @@ namespace net {
   // ----
 
   void set_addr(addrinfo* &ai, pstd::vstring addr) {
+    log("assigning address %s", &addr[0]);
+
     set_family(ai, get_family(addr));
 
     switch (ai->ai_family) {
       case AF_INET6: {
-        ai->ai_addr = (sockaddr *) new sockaddr_in6();
-        ai->ai_addrlen = sizeof(sockaddr_in6);
+        auto sa = new sockaddr_in6();
         
-        inet_pton(AF_INET6, &addr[0], &((sockaddr_in6 *) ai->ai_addr)->sin6_addr);
+        auto i = inet_pton(AF_INET6, &addr[0], &sa->sin6_addr);
+        ai->ai_addrlen = sizeof(sockaddr_in6);
+        ai->ai_addr = (sockaddr *) sa;
+
+        if (i == EOF)
+          throw exception("unable to set ipv6 addr");
+
         break;
       }
 
       case AF_INET: {
-        ai->ai_addr = (sockaddr *) new sockaddr_in();
+        auto sa = new sockaddr_in();
+        
+        auto i = inet_pton(AF_INET, &addr[0], &sa->sin_addr);
         ai->ai_addrlen = sizeof(sockaddr_in);
+        ai->ai_addr = (sockaddr *) sa;
 
-        inet_pton(AF_INET, &addr[0], &((sockaddr_in *) ai->ai_addr)->sin_addr);
+        if (i == EOF)
+          throw exception("unable to set ipv4 addr");
+
         break;
       }
 
@@ -207,6 +251,8 @@ namespace net {
   }
 
   std::string get_addr(addrinfo* ai) {
+    log("getting address");
+
     auto out = std::string();
 
     switch (ai->ai_family) {
@@ -232,6 +278,8 @@ namespace net {
   // ----
 
   uint16_t get_port(addrinfo* ai) {
+    log("getting port");
+
     auto out = int(0);
 
     switch (ai->ai_family) {
@@ -252,6 +300,8 @@ namespace net {
 
   // assign port
   void set_port(addrinfo* &ai, uint16_t p) {
+    log("assigning port %i", p);
+
     switch (ai->ai_family) {
       case AF_INET6:
         ((sockaddr_in6 *) ai->ai_addr)->sin6_port = htons(p);
@@ -270,6 +320,8 @@ namespace net {
 
   // return a list of IPv4 and/or IPv6 addresses
   std::list<std::string> lookup(pstd::vstring host, family f = family::Unspecified) {
+    log("looking up host %s, of family %i", &host[0], f);
+
     auto out = std::list<std::string>();
 
     auto ai = new addrinfo();
@@ -284,8 +336,12 @@ namespace net {
 
         auto found = pstd::find(out, [&](auto ip) { return ip == it; });
 
-        if (!found)
-          out.push_back(it);
+        if (found)
+          continue;
+
+        out.push_back(it);
+
+        log("added address to lookup list %s", &it[0]);
       }
     }
 
@@ -303,6 +359,8 @@ namespace net {
   // ----
 
   status option(uint id, uint opt, uint on = !0) {
+    log("setting socket opt %i to %s", on == !0 ? "on" : "off");
+
     auto i = ::setsockopt(id, SOL_SOCKET, opt, &on, sizeof(int));
 
     return (i != EOF) ?
@@ -310,6 +368,8 @@ namespace net {
   }
 
   std::optional<uint> open(addrinfo* ai) {
+    log("attempting to open socket");
+
     auto i = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
 
     if (i == EOF)
@@ -318,14 +378,38 @@ namespace net {
     return i;
   }
 
-  status connect(uint id, addrinfo* ai) {
+  status connect(uint id, addrinfo* &ai) {
+    log("attempting connection");
+
+    switch(ai->ai_family) {
+      case AF_INET6:
+        ((sockaddr_in6 *) ai->ai_addr)->sin6_family = AF_INET6;
+        break;
+
+      case AF_INET:
+        ((sockaddr_in *) ai->ai_addr)->sin_family = AF_INET;
+        break;
+    }
+
     auto i = ::connect(id, ai->ai_addr, ai->ai_addrlen);
 
     return (i != EOF) ?
       status::OK : status::FAIL;
   }
 
-  status bind(uint id, addrinfo* ai) {
+  status bind(uint id, addrinfo* &ai) {
+    log("attempting bind");
+
+    switch(ai->ai_family) {
+      case AF_INET6:
+        ((sockaddr_in6 *) ai->ai_addr)->sin6_family = AF_INET6;
+        break;
+
+      case AF_INET:
+        ((sockaddr_in *) ai->ai_addr)->sin_family = AF_INET;
+        break;
+    }
+
     auto i = ::bind(id, ai->ai_addr, ai->ai_addrlen);
 
     return (i != EOF) ?
@@ -333,11 +417,15 @@ namespace net {
   }
 
   status close(uint id) {
+    log("closing socket");
+
     return ::close(id) != EOF ?
       status::FAIL : status::OK;
   }
 
   status listen(uint id, uint length = 1) {
+    log("attempting listen");
+
     auto i = ::listen(id, length);
 
     return (i != EOF) ?
@@ -345,6 +433,8 @@ namespace net {
   }
 
   std::pair<uint, addrinfo*> accept(uint id, addrinfo* ai) {
+    log("accepting next connection");
+
     while (!0) {
       auto ca = new addrinfo({
         .ai_family = ai->ai_family,
@@ -373,43 +463,17 @@ namespace net {
     }
   }
 
-  std::variant<event, std::string> recv(uint id, uint size = 1024) {
+  std::variant<event, std::string> recv(uint id, size_t size = 1024) {
+    log("receiving data from id %i", id);
+
     auto buffer = std::vector<char>(size);
     auto recvd = std::string("");
     auto len = int(0);
 
     while (!0) {
-      auto i = ::recv(id, &buffer[0], size, 0);
+      auto i = ::read(id, &buffer[0], size);
 
-      if (i == EOF) {
-        if (errno == EAGAIN)
-          continue;
-
-        return event::ERROR;
-      }
-
-      if (i == 0)
-        return event::DISCONNECTED;
-
-      auto begin = std::begin(buffer);
-      auto end = std::end(buffer);
-      
-      recvd += std::string(begin, end);
-      buffer.clear();
-      len += i;
-
-      if (i < size)
-        return recvd.substr(0, len);
-    }
-  }
-
-  std::variant<event, std::string> recv(SSL* sid, uint size = 1024) {
-    auto buffer = std::vector<char>(size);
-    auto recvd = std::string("");
-    auto len = int(0);
-
-    while (!0) {
-      auto i = SSL_read(sid, &buffer[0], size);
+      log("recieved data length %i", i);
 
       if (i == EOF) {
         if (errno == EAGAIN)
@@ -435,19 +499,12 @@ namespace net {
 
   template <typename ...A>
     void send(uint id, pstd::vstring text, A ...args) {
+      log("sending data");
+
       auto out = pstd::format(text, args ...);
       auto offset = 0;
 
       while (offset < out.length())
         offset += ::send(id, out.substr(offset).data(), out.substr(offset).length(), 0);
-    }
-
-  template <typename ...A>
-    void send(SSL* sid, pstd::vstring text, A ...args) {
-      auto out = pstd::format(text, args ...);
-      auto offset = 0;
-
-      while (offset < out.length())
-        offset += ::SSL_write(sid, out.substr(offset).data(), out.substr(offset).length(), 0);
     }
 }
